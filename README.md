@@ -1,4 +1,4 @@
-# Echoes: Securing Tomorrow. Today
+# Echoes: Securing Tomorrow, Today
 
 **Echoes** is an AI-powered emergency call management system designed to transcribe, summarize, prioritize, and route emergency and customer service calls. By leveraging advanced AI technologies, Echoes helps reduce response times, eliminate communication errors, and streamline the call handling process across a range of industries, including emergency services, telecommunications, and customer support.
 
