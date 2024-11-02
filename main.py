@@ -10,13 +10,15 @@ from scipy.io.wavfile import write
 import queue
 import time
 
-# api_key = ""
+# API key for the Google Cloud Speech-to-Text API
+api_key = "YOUR_API_KEY"
 if api_key is None:
     raise ValueError("API key is not set.")
 
 genai.configure(api_key=api_key)
 
 model = genai.GenerativeModel("gemini-1.5-flash")
+
 
 class GeminiAPIClient:
     def __init__(self, api_key):
@@ -31,14 +33,18 @@ class GeminiAPIClient:
     
     def summarize_text(self, audio_path):
         prompt = "Summarize the text, make a point list with the value of the point. Example: '1: WHO'S SPEAKING: A MALE 2: WHAT IS BEING SAID: ..." \
-                "TIME: ... WHERE: ... ACTION: ... PRIORITY: ...'For priority, only provide a number between 1 and 10, where 1 is the highest priority. " \
-                " If any point is not present, write 'can't understand'. Predict the priority based on the urgency of the situation."
+             "TIME: ... WHERE: ... ACTION: ... PRIORITY: ...' For priority, only provide a number between 1 and 10, where 1 is the highest priority. " \
+             "If any point is not present, write 'can't understand'. Predict the priority based on the urgency of the situation."
+    
+        # Upload audio file and get response
         audio_file = genai.upload_file(path=audio_path)
         response = model.generate_content([prompt, audio_file])
-
+    
+    # Split the response into lines
         response_total = response.text.split('\n')
+        print("Response Total:", response_total)  # Debug: Verifica il contenuto di response_total
 
-        # Extract the first 5 relevant points
+    # Initialize data dictionary with default "Can't understand" values
         data = {
             'who': "Can't understand",
             'what': "Can't understand",
@@ -46,49 +52,78 @@ class GeminiAPIClient:
             'where': "Can't understand",
             'action_priority': "Can't understand",
         }
-        
+    
+        # Iterate over each line in the response
         for line in response_total:
-            if line.startswith("WHO'S SPEAKING:"):
-                data['who'] = line.split(": ", 1)[1]
-            elif line.startswith("WHAT IS BEING SAID:"):
-                data['what'] = line.split(": ", 1)[1]
-            elif line.startswith("TIME:"):
-                data['when'] = line.split(": ", 1)[1]
-            elif line.startswith("WHERE:"):
-                data['where'] = line.split(": ", 1)[1]
-            elif line.startswith("ACTION:") or line.startswith("PRIORITY:"):
-                data['action_priority'] = line.split(": ", 1)[1]
+            # Pulisce gli asterischi e spazi indesiderati
+            clean_line = line.replace("**", "").strip()
+            print("Processing line:", clean_line)  # Debug: Verifica ogni linea
 
+        # Verifica se la linea contiene il separatore ": " prima di effettuare split
+            if ": " in clean_line:
+                # Divide la linea in nome campo e valore
+                field, value = clean_line.split(": ", 1)
+                field = field.lower()
+
+                # Controlla il campo e aggiorna `data` di conseguenza
+                if "who's speaking" in field:
+                    data['who'] = value.strip()
+                elif "what is being said" in field:
+                    data['what'] = value.strip()
+                elif "time" in field:
+                    data['when'] = value.strip()
+                elif "where" in field:
+                    data['where'] = value.strip()
+                elif "action" in field or "priority" in field:
+                    data['action_priority'] = value.strip()
+
+    # Delete audio file after processing
         genai.delete_file(audio_file.name)
 
-        # Extract priority separately
+    # Extract priority separately
         priority_prompt = "Write only the priority value."
         priority_response = model.generate_content([priority_prompt, response.text])
         priority_value = priority_response.text.strip()
+    
+        print("Data Extracted:", data)  # Debug: Verifica il contenuto di data
+        print("Priority Value:", priority_value)  # Debug: Verifica il valore della priorità
 
         return data, priority_value
+
+
+
+
 
 class EmergencyCallApp(tk.Tk):
     def __init__(self):
         super().__init__()
-
-        # Set the title and size of the window
         self.title("Echoes - Emergency Call Management")
         self.geometry("1000x800")
+        self.configure(bg="#1c1c1c")
 
-        # Define theme colors
-        self.bg_color = "#1c1c1c"  # Darker background color for a modern look
-        self.fg_color = "#ffffff"  # Main text color (white)
-        self.accent_color = "#ff6b6b"  # Accent color (vibrant red)
-        self.button_color = "#2d2d2d"  # Dark button background
+        # Canvas con scrollbar
+        self.canvas = tk.Canvas(self, bg="#1c1c1c", width=1000)
+        self.scrollbar = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.scrollable_frame = tk.Frame(self.canvas, bg="#1c1c1c")
 
-        # Set the background color of the window
-        self.configure(bg=self.bg_color)
+        # Centra gli elementi all'interno di un frame intermedio
+        self.center_frame = tk.Frame(self.scrollable_frame, bg="#1c1c1c")
+        self.center_frame.grid_columnconfigure(0, weight=1)
 
-        # Create the interface
+        # Configura scrollbar e canvas
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+
+        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw", width=950)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        # Chiamata al metodo di creazione dell'interfaccia
         self.create_interface()
-
-        # Variables for recording
         self.is_recording = False
         self.fs = 44100  # Sampling frequency
         self.recording_time = 10  # Recording duration in seconds
@@ -105,78 +140,67 @@ class EmergencyCallApp(tk.Tk):
         self.after(100, self.process_queue)
 
     def create_interface(self):
-        # Title of the app
-        title_label = tk.Label(self, text="Echoes - Emergency Call Management", font=("Helvetica", 24, "bold"), bg=self.bg_color, fg=self.accent_color)
-        title_label.pack(pady=20)
+        title_label = tk.Label(self.center_frame, text="Echoes - Emergency Call Management", font=("Helvetica", 18, "bold"), bg="#1c1c1c", fg="#ff6b6b")
+        title_label.pack(pady=5)
 
-        # Call status
-        self.call_status_label = tk.Label(self, text="Call Status: Waiting...", font=("Helvetica", 14), bg=self.bg_color, fg=self.fg_color)
-        self.call_status_label.pack(pady=10)
+        self.call_status_label = tk.Label(self.center_frame, text="Call Status: Waiting...", font=("Helvetica", 12), bg="#1c1c1c", fg="#ffffff")
+        self.call_status_label.pack(pady=5)
 
-        # Real-time transcription
-        transcription_label = tk.Label(self, text="Real-Time Transcription:", font=("Helvetica", 18, "bold"), bg=self.bg_color, fg=self.fg_color)
-        transcription_label.pack(pady=10)
-        self.transcription_text = scrolledtext.ScrolledText(self, height=10, width=80, bg=self.button_color, fg=self.fg_color, font=("Helvetica", 12), relief="flat", borderwidth=0, padx=10, pady=10)
-        self.transcription_text.pack(pady=10)
+        transcription_label = tk.Label(self.center_frame, text="Real-Time Transcription:", font=("Helvetica", 16, "bold"), bg="#1c1c1c", fg="#ffffff")
+        transcription_label.pack(pady=5)
+        self.transcription_text = scrolledtext.ScrolledText(self.center_frame, height=10, width=80, bg="#2d2d2d", fg="#ffffff", font=("Helvetica", 12), relief="flat", borderwidth=0, padx=10, pady=10)
+        self.transcription_text.pack(pady=5)
 
-        # Automatic summary
-        summary_label = tk.Label(self, text="Automatic Summary:", font=("Helvetica", 18, "bold"), bg=self.bg_color, fg=self.fg_color)
-        summary_label.pack(pady=20)
+        # Bottoni subito sotto il campo di trascrizione
+        self.forward_button = tk.Button(self.center_frame, text="Forward Call", command=self.forward_call, bg="#2d2d2d", fg="#ffffff", font=("Helvetica", 14, "bold"), relief="flat", activebackground="#2d2d2d", activeforeground="#ffffff", borderwidth=0, padx=20, pady=10)
+        self.forward_button.pack(pady=5)
 
-        # Create the five summary fields
-        self.create_summary_fields()
+        self.record_button = tk.Button(self.center_frame, text="Start Recording", command=self.toggle_recording, bg="#ff6b6b", fg="#ffffff", font=("Helvetica", 14, "bold"), relief="flat", activebackground="#ff6b6b", activeforeground="#ffffff", borderwidth=0, padx=20, pady=10)
+        self.record_button.pack(pady=5)
 
-        # Assigned priority
-        priority_label = tk.Label(self, text="Assigned Priority:", font=("Helvetica", 16), bg=self.bg_color, fg=self.fg_color)
-        priority_label.pack(pady=10)
-        self.priority_value = tk.Label(self, text="Not Assigned", font=("Helvetica", 18, "bold"), bg=self.bg_color, fg=self.accent_color)
-        self.priority_value.pack(pady=10)
+        self.countdown_label = tk.Label(self.center_frame, text="", font=("Helvetica", 12), bg="#1c1c1c", fg="#ff6b6b")
+        self.countdown_label.pack(pady=5)
 
-        # Add frame to hold the two buttons horizontally
-        buttons_frame = tk.Frame(self, bg=self.bg_color)
-        buttons_frame.pack(pady=20, fill=tk.X)
+        summary_label = tk.Label(self.center_frame, text="Automatic Summary:", font=("Helvetica", 12, "bold"), bg="#1c1c1c", fg="#ffffff")
+        summary_label.pack(pady=5)
 
-        # Use grid layout for precise positioning
-        buttons_frame.grid_columnconfigure(0, weight=1)
-        buttons_frame.grid_columnconfigure(1, weight=1)
-
-        # Button to forward the call on the left
-        forward_button = tk.Button(buttons_frame, text="Forward Call", command=self.forward_call, bg=self.button_color, fg=self.fg_color, font=("Helvetica", 14, "bold"), relief="flat", activebackground=self.button_color, activeforeground=self.fg_color, borderwidth=0, padx=20, pady=10)
-        forward_button.grid(row=0, column=0, sticky="w", padx=20)
-
-        # Button to start recording on the right
-        self.record_button = tk.Button(buttons_frame, text="Start Recording", command=self.toggle_recording, bg=self.accent_color, fg=self.fg_color, font=("Helvetica", 14, "bold"), relief="flat", activebackground=self.accent_color, activeforeground=self.fg_color, borderwidth=0, padx=20, pady=10)
-        self.record_button.grid(row=0, column=1, sticky="e", padx=20)
-
-        # Countdown label
-        self.countdown_label = tk.Label(self, text="", font=("Helvetica", 14), bg=self.bg_color, fg=self.accent_color)
-        self.countdown_label.pack(pady=10)
-
-    def create_summary_fields(self):
-        fields = [("Who's Speaking:", "who_text"), 
-                  ("What's Being Said:", "what_text"), 
-                  ("When (Time):", "when_text"), 
-                  ("Where:", "where_text"), 
+        fields = [("Who's Speaking:", "who_text"),
+                  ("What's Being Said:", "what_text"),
+                  ("When (Time):", "when_text"),
+                  ("Where:", "where_text"),
                   ("Action & Priority:", "action_priority_text")]
 
         for label_text, var_name in fields:
-            label = tk.Label(self, text=label_text, font=("Helvetica", 14), bg=self.bg_color, fg=self.fg_color)
+            label = tk.Label(self.center_frame, text=label_text, font=("Helvetica", 14), bg="#1c1c1c", fg="#ffffff")
             label.pack(pady=5)
-            text_box = tk.Text(self, height=1, width=80, bg=self.button_color, fg=self.fg_color, font=("Helvetica", 12), relief="flat", borderwidth=0, padx=10, pady=10)
+            text_box = tk.Text(self.center_frame, height=1, width=80, bg="#2d2d2d", fg="#ffffff", font=("Helvetica", 12), relief="flat", borderwidth=0, padx=10, pady=10)
             text_box.pack(pady=5)
             setattr(self, var_name, text_box)
 
+        priority_label = tk.Label(self.center_frame, text="Assigned Priority:", font=("Helvetica", 16), bg="#1c1c1c", fg="#ffffff")
+        priority_label.pack(pady=10)
+        self.priority_value = tk.Label(self.center_frame, text="Not Assigned", font=("Helvetica", 18, "bold"), bg="#1c1c1c", fg="#ff6b6b")
+        self.priority_value.pack(pady=10)
+
+        # Aggiunge il frame centrato alla finestra scrollabile
+        self.center_frame.pack(pady=20)
+
     def forward_call(self):
-        self.call_status_label.config(text="Call Status: Forwarded", fg=self.accent_color)
+        self.call_status_label.config(text="Call Status: Forwarded", fg="#ff6b6b")
         print("Call forwarded to the specific dispatcher.")
 
     def toggle_recording(self):
+        if self.record_button.cget("text") == "Start Recording":
+            self.record_button.config(text="Stop Recording", bg="#ff6b6b")
+        else:
+            self.record_button.config(text="Start Recording", bg="#ff6b6b")
         self.transcription_text.delete(1.0, tk.END)
         self.who_text.delete(1.0, tk.END)
         self.what_text.delete(1.0, tk.END)
         self.when_text.delete(1.0, tk.END)
         self.where_text.delete(1.0, tk.END)
         self.action_priority_text.delete(1.0, tk.END)
+
         if not self.is_recording:
             self.is_recording = True
             self.record_button.config(text=f"Recording: {self.recording_time} sec")
@@ -208,7 +232,7 @@ class EmergencyCallApp(tk.Tk):
         sd.wait()
         write(audio_path, self.fs, recording)
         self.queue.put(('transcribe', audio_path))
-
+    
     def process_queue(self):
         while not self.queue.empty():
             task, audio_path = self.queue.get()
@@ -254,9 +278,18 @@ class EmergencyCallApp(tk.Tk):
         self.when_text.insert(tk.END, data['when'])
         self.where_text.insert(tk.END, data['where'])
         self.action_priority_text.insert(tk.END, data['action_priority'])
+        current_time = time.strftime("%Y%m%d_%H%M%S")
+        file_name = f"EMERGENCY{self.priority_value}_{current_time}.txt"
+        with open(file_name, "w") as file:
+            file.write("Summary of the Emergency Call:\n")
+            file.write(f"Who's Speaking: {data['who']}\n")
+            file.write(f"What's Being Said: {data['what']}\n")
+            file.write(f"When (Time): {data['when']}\n")
+            file.write(f"Where: {data['where']}\n")
+            file.write(f"Action & Priority: {data['action_priority']}\n")
+            file.write(f"Assigned Priority: {self.priority_value}\n")
 
-# Run the application
+
 if __name__ == "__main__":
     app = EmergencyCallApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_closing)
     app.mainloop()
